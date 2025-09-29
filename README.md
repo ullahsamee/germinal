@@ -64,66 +64,403 @@ python run_germinal.py weights_beta=0.3 weights_plddt: 1.0
 > These runs tested a 130 amino acid target with a 131 amino acid nanobody. For larger runs, we recommend 60GB+ VRAM.
 
 <!-- TOC --><a name="installation"></a>
-### Installation
+### Installation Tested on RTX5090 | CUDA 13.0 | Kernel 6.19.9 | Ubuntu 25.04
 
-1. Ensure you have an NVIDIA GPU with a recent driver (recommended CUDA 12+). You can verify with:
-   ```bash
-   nvidia-smi
-   ```
-2. Install Miniconda or Anaconda if not already available.
+1. Ensure you have an NVIDIA GPU with a recent driver, (CUDA 13.0) and also Miniconda or Anaconda.
 
-3. Follow the instructions in `environment_setup.md`
+Follow the instructions Now:
+```
+git clone https://github.com/SantiagoMille/germinal.git
+cd germinal
+```
+Create conda environment with Python 3.10
+```
+conda create --name germinal python=3.10
+conda activate germinal
+```
+Install uv 
+```
+pip install uv
+```	
+some more packages
+```
+uv pip install pandas matplotlib numpy biopython scipy seaborn tqdm ffmpeg py3dmol \
+  chex dm-haiku dm-tree joblib ml-collections immutabledict optax cvxopt mdtraj colabfold
+```
+Download AlphaFold params
+```
+mkdir -p params
+cd params
+aria2c -q -x 16 https://storage.googleapis.com/alphafold/alphafold_params_2022-12-06.tar
+tar -xf alphafold_params_2022-12-06.tar -C .
+cd ..
+```
+ColabDesign
+```
+uv pip install -e colabdesign
+```
+PyRosetta (handle the academic license automatically)
+```
+uv pip install pyrosetta-installer
+```
+Install Torch, Chai, and IgLM
+```
+uv pip install iglm torchvision==0.21.* chai-lab==0.6.1 \
+  torch==2.6.* torchaudio==2.6.* torchtyping==0.1.5 torch_geometric==2.6.*
+```
+Install Project in editable Mode
+```
+uv pip install -e .
+```
+Ensure some dependencies compatibility check
+```
+uv pip install jax==0.5.3
+uv pip install dm-haiku==0.0.13 
+uv pip install hydra-core omegaconf
+uv pip install "jax[cuda12_pip]==0.5.3" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
+I assume you're in the germinal dir with the env activated
+```
+cd ~/pathtodirectory/germinal
+conda activate germinal
+```
+Verify GPU jax enabled:
+```
+python -c "import jax; print('JAX devices:', jax.devices()); print('GPU available:', len(jax.devices('gpu')) > 0)"
+```
+Check PyRosetta:
+```
+python -c "import pyrosetta; print('PyRosetta imported successfully')"
+```
+Verify ColabDesign:
+```
+python -c "from colabdesign import mk_afdesign_model; print('ColabDesign imported successfully')"
+```
+Check compatibility torch with 5090 CUDA 13.0:
+```
+uv pip uninstall torch torchvision torchaudio
+uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
+```
+Finally check every package installed properly:
+```
+python validate_install.py
+```
+If the validation passes, try a quick --help output check:
+```
+python run_germinal.py --help
+```
+# Before usage
+> [!IMPORTANT]
+> ### Quick look into - pdl1.yaml settings in /germinal/configs/target/pdl1.yaml
 
-4. Copy AlphaFold-Multimer parameters to `params/` and untar them. 
-   Alternatively, you can run the following lines inside `params/` to download and untar:
-   ```bash
-   aria2c -x 16 https://storage.googleapis.com/alphafold/alphafold_params_2022-12-06.tar
-   tar -xf alphafold_params_2022-12-06.tar -C .
-   ```
+#### Default PDL1 target inputs
 
-5. Activate the environment:
-   ```bash
-   conda activate germinal
-   ```
+```
+target_name: "pdl1"                     # Identifier name for this target protein
+target_pdb_path: "pdbs/pdl1.pdb"       # Path to the target protein structure file
+target_chain: "A"                      # Which chain in the PDB is the target protein
+binder_chain: "B"                      # Which chain will be the designed antibody or nanobody
+target_hotspots: "A37,A39,A41,A96,A98" # Key hotspots residues for binding
+length: 133                            # Number of amino acids in the target protein
+```
+> [!IMPORTANT]
+> ### Quick look into - config.yaml Settings in /germinal/configs/config.yaml
+```yaml
+# @package *global*
+# Main Hydra configuration for Germinal
+# This file defines the default configuration and specifies which sub-configs to use
+defaults:
+  - run: vhh                    # Antibody type: 'vhh' for nanobodies, 'scfv' for full antibodies
+  - target: pdl1               # Target protein: which protein to design antibodies against
+  - filter/initial: default    # Initial quality filters applied after design generation
+  - filter/final: default      # Final acceptance criteria for successful designs
+  - *self*                     # Include settings from this file
+  - override hydra/hydra_logging: disabled   # Turn off Hydra framework logging
+  - override hydra/job_logging: disabled     # Turn off job-specific logging
 
-6. (Optional) Run validation at any time to ensure all packages have installed correctly:
-   ```bash
-   python validate_install.py
-   ```
+# High Level Run Settings
+project_dir: "."                    # Base directory for the project (current directory)
+results_dir: "results"              # Where to save all output files and designs
+experiment_name: "germinal_run"     # Name prefix for this design campaign
+run_config: ""                      # Additional run identifier (leave empty for default)
 
-Notes:
-- AlphaFold-Multimer and AlphaFold3 parameters are large and must be downloaded manually.
+# Design Scale and Limits
+max_trajectories: 10000             # Maximum design attempts to try
+max_hallucinated_trajectories: 1000 # Limit on designs that pass initial generation
+max_passing_designs: 100            # Stop when this many designs pass all filters
 
-<!-- TOC --><a name=docker"></a>
-### Docker
-Germinal can be run using Docker:
+# File Paths
+pdb_dir: "pdbs"                     # Directory containing target protein PDB files
+af_params_dir: ""                   # AlphaFold parameters directory (auto-detected if empty)
+dssp_path: "params/dssp"            # Path to DSSP secondary structure tool
+dalphaball_path: "params/DAlphaBall.gcc"  # Path to DAlphaBall cavity detection tool
 
-```bash
-docker build -t germinal .
-docker run -it --rm --gpus all \
-  -v "$PWD/results:/workspace/results" \
-  -v "$PWD/pdbs:/workspace/pdbs" \
-  germinal bash
+# Framework Settings (Advanced)
+hydra:
+  output_subdir: null               # Don't create extra Hydra output directories
+  run:
+    dir: .                          # Run from current directory
 ```
 
-and Singularity (shown)/Apptainer:
-```bash
-mkdir -p results
-singularity pull germinal.sif docker://jwang003/germinal:latest
-singularity shell --nv \
-  --bind "$PWD/results:/workspace/results" \
-  --bind "$PWD/pdbs:/workspace/pdbs" \
-  --pwd /workspace \
-  germinal.sif
-```
-> **Note:** Pulling may hang on `Creating SIF file...` If so, check if the command is done with `singularity exec germinal.sif python -c "print('ok')"`
+> [!IMPORTANT]
+> ### Quick look into - vhh.yaml settings in /germinal/configs/run/vhh.yaml
+```yaml
+# VHH (Nanobody) Configuration Guide
+#General Run Settings
+ type: "nb"  #Specifies nanobody design (singlechain antibody fragments from camelids)
+ cdr_lengths: [11, 8, 18]  #Length of complementaritydetermining regions (CDR1, CDR2, CDR3) that bind the target
+ fw_lengths: [25,17,38,14]  #Framework region lengths that provide structural scaffold
+ pregenerate_seeds: false # If true, uses reproducible random seeds; if false, generates random designs
+ vh_first/vh_len/vl_len: null  #Not used for nanobodies (only relevant for full antibodies with heavy/light chains)
 
-Volumes are mounted to save generated input complexes and results from sampling.
+#Loss Function Parameters (Design Quality Metrics)
+These weights control how the germinal optimizes the antibody design:
 
-Once inside the container:
-```bash
-python run_germinal.py
+#Structure Quality Weights
+ weights_plddt: 1.0  #Protein confidence score (higher = more confident structure)
+ weights_i_plddt: 1.0  #Interface confidence between antibody and target
+ weights_pae_intra: 0.1  #Internal structure accuracy within the antibody
+ weights_pae_inter: 0.5  #Binding interface accuracy between antibody and target
+ weights_iptm: 0.75  #Interface quality metric (critical for binding)
+
+#Contact and Shape Weights
+ weights_con_intra/inter: 0.1/0.2  #Rewards proper contacts within antibody and at binding interface
+ weights_rg: 0.1  #Radius of gyration (controls antibody compactness)
+ weights_helix/beta: 0.1/0.2  #Secondary structure preferences
+
+#Contact Distance Settings
+ intra_contact_distance: 14.0  #Distance (Å) to consider internal contacts
+ inter_contact_distance: 20.0  #Distance (Å) to consider binding contacts
+ intra/inter_contact_number: 2/10  #Target number of contacts
+ framework_contact_loss: true  #Penalizes unwanted framework contacts
+
+#Hallucination Settings (Design Process)
+ logits_steps: 65  #Initial sequence optimization steps
+ softmax_steps: 35  #Sequence refinement steps
+ search_steps: 10  #Final sequence search steps
+ search_mutation_rate: 0.05  #Probability of mutations during search
+
+#Quality Thresholds
+ plddt_threshold: 0.82  #Minimum structure confidence (01 scale)
+ i_ptm_threshold: 0.68  #Minimum interface quality
+ i_pae_threshold: 0.27  #Maximum interface error (lower is better)
+ seq_entropy_threshold: 0.10  #Sequence diversity control
+
+#IgLM Settings (Language Model for Antibodies)
+ grad_merge_method: "pcgrad"  #Method for combining gradients from different loss terms
+ iglm_scale: [0.2, 0.4, 0.4, 1.0]  #Relative importance of language model for each CDR and framework
+ iglm_temp: 0.6  #Temperature for sequence sampling (lower = more conservative)
+ iglm_species: "[HUMAN]"  #Species context for the language model
+ seq_init_mode: ["gumbel", "soft"]  #Sequence initialization methods
+ bias_redesign: 10  #Bias strength for sequence redesign
+ use_pos_distance: true  #Use positional distance information
+ clear_best: true  #Clear best design between iterations
+
+#Sequence Redesign Settings (AbMPNN)
+ mpnn_fix_interface: true  #Keep binding interface residues fixed during redesign
+ num_seqs: 40  #Number of sequences to generate
+ max_mpnn_sequences: 4  #Maximum sequences to carry forward
+ sampling_temp: 0.1  #Temperature for MPNN sampling
+ backbone_noise: 0.0  #Structural noise added to backbone
+ model_path/mpnn_weights: "abmpnn"  #AbMPNN model for antibodyspecific redesign
+
+#Structure Prediction Settings
+ structure_model: "chai"  #AI model for structure prediction (chai/af3/af2)
+ msa_mode: "target"  #Multiple sequence alignment mode
+
+#AlphaFold3 Configuration (when using AF3)
+ af3_model_dir: null  #Path to AF3 model parameters
+ af3_repo_path/sif_path: null  #AF3 installation paths
+ msa_db_dir: null  #Multiple sequence alignment database
+ use_metagenomic_db: false  #Use metagenomic sequences for MSA
+
+#Template Removal Settings
+Controls what structural information to remove from templates:
+ rm_template_seq: true  #Remove template sequence information
+ rm_template_sc: false  #Keep template side chains
+ rm_binder_seq/sc: true  #Remove binder sequence and side chains
+ rm_binder: false  #Don't remove entire binder structure
+
+#Advanced Settings (Usually Don't Change)
+
+#Optimization Parameters
+ learning_rate: 0.1  #Step size for gradient descent
+ optimizer: "sgd"  #Optimization algorithm
+ normalize_gradient: true  #Normalize gradient magnitudes
+ num_recycles_design: 3  #Structure prediction recycles
+ recycle_mode: "last"  #Which recycle to use
+
+#Additional Loss Terms
+ use_helix/beta_loss: true  #Encourage secondary structure
+ beta_loss_type: "strand"  #Type of beta structure loss
+ use_rg_loss: true  #Use radius of gyration loss
+ use_i_ptm_loss: true  #Use interface PTM loss
+
+#Output Settings
+ save_design_animations: false  #Save design trajectory animations
+ save_design_trajectory_plots: true  #Save optimization plots
+ omit_AAs: "C"  #Amino acids to avoid (C=cysteine, prevents unwanted disulfides)
+
+#Filter Thresholds
+These control which designs pass quality checks:
+ clash_threshold: 2.4  #Maximum atomic clash distance (Å)
+ hotspot_distance_threshold: 5.3  #Distance to target hotspots (Å)
+ residue_contact_distance: 6.0  #Residue contact threshold (Å)
+ min_cdr_hotspot_contacts: 3  #Minimum CDR contacts with hotspots
+ sap_limit_sasa: 3.0  #Surface accessibility threshold
+ sap_patch_radius: 7.5  #Surface patch radius (Å)
+ atom_distance_cutoff: 3.0  #Atom distance for redesign (Å)
 ```
+
+> [!IMPORTANT]
+> ### Quick look into - scfv.yaml settings in /germinal/configs/run/scfv.yaml
+
+```yaml
+# @package _global_
+# scFv run configuration
+# This file configures a run for designing a single-chain variable fragment (scFv).
+
+---
+# General run settings
+# These parameters define the basic architecture of the scFv molecule.
+type: "scfv"                               # The type of molecule being designed.
+cdr_lengths: [8, 8, 13, 6, 6, 9]           # Lengths of the 6 CDRs (H1, H2, H3, then L1, L2, L3).
+fw_lengths: [25,17,38,52,17,33,10]         # Lengths of the 7 framework regions that form the scaffold.
+pregenerate_seeds: false                   # If true, creates initial random sequences before the main process.
+vh_first: true                             # If true, the heavy chain (VH) comes before the light chain (VL) in the sequence.
+vh_len: 120                                # Total length of the heavy chain variable domain.
+vl_len: 108                                # Total length of the light chain variable domain.
+
+---
+# Loss function parameters
+# These weights control the importance of different quality metrics during optimization. The goal is to minimize a total "loss" score.
+weights_plddt: 1.0                         # Importance of the overall structure's confidence score (pLDDT).
+weights_i_plddt: 1.0                       # Importance of the pLDDT score specifically at the binding interface.
+weights_pae_intra: 0.1                     # Importance of correctly predicting relative positions *within* a single chain (PAE).
+weights_pae_inter: 0.5                     # Importance of correctly predicting relative positions *between* the two chains.
+weights_iptm: 0.75                         # Importance of the interface prediction confidence score (ipTM).
+weights_con_intra: 0.1                     # Importance of forming correct contacts *within* each chain.
+weights_con_inter: 0.2                     # Importance of forming correct contacts *between* the two chains.
+weights_rg: 0.1                            # Importance of the radius of gyration (protein compactness).
+weights_helix: 0.1                         # Importance of forming alpha-helices.
+weights_beta: 0.1                          # Importance of forming beta-sheets.
+
+intra_contact_distance: 14.0               # Maximum distance (in Angstroms, Å) for an intra-chain contact.
+inter_contact_distance: 20.0               # Maximum distance (Å) for an inter-chain contact.
+intra_contact_number: 2                    # Target number of intra-chain contacts to encourage.
+inter_contact_number: 10                   # Target number of inter-chain contacts to encourage.
+framework_contact_loss: true               # If true, includes framework region contacts in the loss calculation.
+framework_contact_offset: 1                  # An offset value used in the framework contact calculation.
+
+---
+# Hallucination settings
+# "Hallucination" refers to generating a novel protein sequence from scratch. These settings control that process.
+logits_steps: 60                           # Number of optimization steps applied to the raw model outputs (logits).
+softmax_steps: 35                          # Number of optimization steps applied after the softmax function (probabilities).
+search_steps: 10                           # Number of steps for a random mutation-based search to refine the sequence.
+search_mutation_rate: 0.05                 # Probability of mutating an amino acid during the search phase.
+plddt_threshold: 0.8                       # Minimum pLDDT score for a design to be considered successful.
+i_ptm_threshold: 0.68                      # Minimum interface pTM score for a design to be considered successful.
+i_pae_threshold: 0.27                      # Maximum interface PAE score for a design to be considered successful.
+seq_entropy_threshold: 0.10                # A threshold for sequence diversity to prevent the model from getting stuck.
+
+---
+# IgLM settings
+# Controls the use of an Immunoglobulin Language Model (IgLM) to generate more "natural" antibody-like sequences.
+grad_merge_method: "pcgrad"                # Method for combining model updates to prevent conflicting signals.
+iglm_scale: [0.0, 0.2, 0.4, 1.0]           # A schedule that controls how strongly the IgLM influences the design over time.
+iglm_temp: 0.6                             # "Temperature" for sampling. Higher values lead to more diverse sequences.
+iglm_species: "[HUMAN]"                    # Biases the generated sequence to resemble antibodies from a specific species.
+seq_init_mode: ["gumbel", "soft"]          # Method used to generate the very first sequence.
+bias_redesign: 10                          # The strength of the bias applied during the sequence redesign phase.
+use_pos_distance: true                     # If true, incorporates positional distance information into the model.
+clear_best: true                           # If true, clears the memory of the "best design so far" at certain intervals.
+
+---
+# Sequence redesign settings
+# Controls the process of refining the amino acid sequence for a given 3D backbone, often using a tool like MPNN.
+mpnn_fix_interface: true                   # If true, the amino acids at the binding interface are kept unchanged during redesign.
+num_seqs: 40                               # The total number of new sequences to generate for the final design.
+max_mpnn_sequences: 4                      # The maximum number of sequences the MPNN model should propose for each backbone.
+sampling_temp: 0.1                         # Sampling temperature for MPNN. Lower is more conservative; higher is more diverse.
+backbone_noise: 0.0                        # Amount of random noise to add to backbone coordinates before redesign.
+model_path: "abmpnn"                       # Specifies the file path for the sequence redesign model.
+mpnn_weights: "abmpnn"                     # Specifies which pre-trained weights to use for the MPNN model.
+
+---
+# Structure prediction settings
+structure_model: "chai"                    # The name of the software to use for predicting the 3D structure (e.g., "chai", "af3").
+msa_mode: "target"                         # The method for generating the Multiple Sequence Alignment (MSA).
+
+---
+# AF3 configuration (required when structure_model == "af3")
+af3_repo_path: null                        # Path to the AlphaFold 3 repository (user must provide).
+af3_sif_path: null                         # Path to the AlphaFold 3 singularity image file (user must provide).
+af3_model_dir: null                        # Path to the AlphaFold 3 model parameters directory (user must provide).
+af3_db_dir: null                           # Path to the AlphaFold 3 sequence databases (user must provide).
+msa_db_dir: null                           # Path to the MSA databases (user must provide).
+use_metagenomic_db: false                  # If true, searches massive environmental sequence databases.
+
+---
+# Template removal settings
+# Controls how the algorithm uses (or ignores) known protein structures (templates).
+rm_template_seq: true                      # If true, removes the amino acid sequence from a template, using only its backbone shape.
+rm_template_sc: false                      # If true, removes the side-chain information from a template.
+rm_binder: false                           # If true, completely removes the binding partner from a template complex.
+rm_binder_seq: true                        # If true, removes only the sequence of the binding partner.
+rm_binder_sc: true                         # If true, removes only the side-chain information of the binding partner.
+
+---
+###### REMAINING SETTINGS ######
+# These settings are typically not changed from run to run.
+
+# Model and Optimization settings
+learning_rate: 0.1                         # The learning rate for the optimizer.
+optimizer: "sgd"                           # The type of optimizer to use (e.g., "sgd", "adam").
+normalize_gradient: true                   # If true, normalizes the gradients during optimization.
+linear_lr_annealing: false                 # If true, linearly decreases the learning rate over time.
+min_lr_scale: 0.01                         # The minimum learning rate scale when annealing.
+use_multimer_design: true                  # Set to true for multi-chain designs like scFv.
+sample_models: true                        # If true, samples from different structure prediction models.
+num_models: 1                              # Number of models to use for structure prediction.
+num_recycles_design: 3                     # How many times the model refines its own prediction.
+recycle_mode: "last"                       # Which iteration's output to use for the next recycle.
+soft_iterations: 60                        # Number of iterations for the soft sequence optimization phase.
+
+# Other loss settings
+use_helix_loss: true                       # If true, enables the alpha-helix loss term.
+use_beta_loss: true                        # If true, enables the beta-sheet loss term.
+beta_loss_type: "strand"                   # The type of calculation for beta-sheet loss.
+use_rg_loss: true                          # If true, enables the radius of gyration loss term.
+use_termini_distance_loss: false           # If true, adds a loss term for the distance between chain ends.
+use_i_ptm_loss: true                       # If true, enables the interface pTM loss term.
+
+# File management settings
+save_design_animations: false              # If true, saves the design process as an animation (e.g., GIF).
+save_design_trajectory_plots: true         # If true, saves plots tracking metrics over the design trajectory.
+
+# Other settings
+omit_AAs: false                            # If true, prevents the use of certain specified amino acids.
+force_reject_AA: false                     # If true, forces rejection of certain amino acids.
+dgram_cce: 0.01                            # A parameter for the distogram loss calculation.
+show_config: true                          # If true, prints the configuration at the start of the run.
+
+# Filter thresholds (used for post-processing and filtering final designs)
+clash_threshold: 2.4                       # Å for atomic clash detection.
+hotspot_distance_threshold: 5.3            # Å to consider residues near binding hotspots.
+residue_contact_distance: 6.0              # Å threshold for residue-residue contact.
+min_cdr_hotspot_contacts: 3                # Minimum hotspot contacts required in CDRs.
+sap_limit_sasa: 3.0                        # Minimal Solvent Accessible Surface Area (SASA) in a patch to be considered.
+sap_patch_radius: 7.5                      # Å radius for Surface Aggregation Propensity (SAP) patch calculation.
+sap_avg_sasa_patch_thr: 1.5                # Average SASA threshold per patch for SAP analysis.
+atom_distance_cutoff: 3.0                  # Å threshold for atom distance in redesign.
+```
+
+#### Outputs
+- **Results Structure**:
+  - `accepted/` - Designs ready for experimental testing
+  - `trajectories/` - Designs that failed filters
+  - `redesign_candidates/` - Designs that were redesigned but still failed
 
 <!-- TOC --><a name="usage"></a>
 ## Usage
@@ -159,7 +496,9 @@ configs/
         └── scfv.yaml        # Final filters for scfv runs
 ```
 
-In general, the main run settings and filters should stay the same and can be run as defaults unless you are experimenting. To design nanobodies targeting PD-L1, simply run:
+
+> [!IMPORTANT]
+> # In general, the main run settings and filters should stay the same and can be run as defaults unless you are experimenting. To design nanobodies targeting PD-L1, simply run:
 
 ```bash
 python run_germinal.py
