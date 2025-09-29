@@ -112,7 +112,7 @@ Install Project in editable Mode
 ```
 uv pip install -e .
 ```
-Ensure some dependencies compatibility check
+Ensure some dependencies jax cuda, hydra install 
 ```
 uv pip install jax==0.5.3
 uv pip install dm-haiku==0.0.13 
@@ -124,7 +124,7 @@ I assume you're in the germinal dir with the env activated
 cd ~/pathtodirectory/germinal
 conda activate germinal
 ```
-Verify GPU jax enabled:
+Verify GPU(CUDA) jax enabled:
 ```
 python -c "import jax; print('JAX devices:', jax.devices()); print('GPU available:', len(jax.devices('gpu')) > 0)"
 ```
@@ -136,7 +136,7 @@ Verify ColabDesign:
 ```
 python -c "from colabdesign import mk_afdesign_model; print('ColabDesign imported successfully')"
 ```
-Check compatibility torch with 5090 CUDA 13.0:
+Install compatibile nightly torch build with 5090 CUDA 13.0:
 ```
 uv pip uninstall torch torchvision torchaudio
 uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
